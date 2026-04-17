@@ -1,0 +1,25 @@
+ORG &O50000
+SADD &O50000
+
+SIL 0
+ENTSR 0
+
+; Set terminal output mode
+EXF 0
+DATA EF
+DATA EF
+
+; Output "HI\r\n"
+OUT 0
+DATA CL
+DATA CH
+
+>DONE JP DONE
+
+>EF DATA &O13
+>CH DATA &O110
+DATA &O111
+DATA &O15
+>CL DATA &O12
+
+END

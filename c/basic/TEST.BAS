@@ -1,0 +1,7 @@
+10 PRINT "HELLO, WORLD!"
+20 X=5
+30 Y=10
+40 PRINT "X=%, Y=%", X, Y
+50 PRINT "X+Y=%", X+Y
+RUN
+BYE

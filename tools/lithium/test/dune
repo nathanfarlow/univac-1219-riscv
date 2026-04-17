@@ -1,0 +1,6 @@
+(library
+ (name test_lithium)
+ (libraries lithium core)
+ (inline_tests)
+ (preprocess
+  (pps ppx_expect ppx_jane)))

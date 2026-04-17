@@ -1,0 +1,54 @@
+; PC_OFFSET += INSN_WORD2 and fetch next instruction
+>BRANCH_TAKE ENTAL INSN_WORD2
+ADDAL PC_OFFSET
+STRAL PC_OFFSET
+ENTB PC_OFFSET
+JP FETCH_LOOP
+
+```
+(* if_equal: target when src1 == src2
+   if_not_equal: target when src1 != src2 *)
+let branch_eq ~label ~if_equal ~if_not_equal =
+  [ sprintf ">%s ENTAL INSN_SRC1_OFFSET" label
+  ; "ADDALK REG_0_LO"
+  ; sprintf "STRADR %s_SLCP_LO" label
+  ; "ADDALK 1"
+  ; sprintf "STRADR %s_SLCP_HI" label
+  ; "ENTB INSN_DEST_OFFSET"
+  ; "ENTALB REG_0_LO"
+  ; sprintf ">%s_SLCP_LO SLCP 0" label
+  ; sprintf "JPALNZ %s" if_not_equal
+  ; "ENTALB REG_0_HI"
+  ; sprintf ">%s_SLCP_HI SLCP 0" label
+  ; sprintf "JPALNZ %s" if_not_equal
+  ; sprintf "JP %s" if_equal
+  ] |> emit;;
+
+(* Branch if src1 == src2 *)
+branch_eq ~label:"OP_BEQ"
+  ~if_equal:"BRANCH_TAKE" ~if_not_equal:"NEXT_INSTRUCTION";;
+
+(* Branch if src1 != src2 *)
+branch_eq ~label:"OP_BNE"
+  ~if_equal:"NEXT_INSTRUCTION" ~if_not_equal:"BRANCH_TAKE";;
+
+(* Branch if src1 < src2 (signed) *)
+signed_lt_cmp ~label:"OP_BLT"
+  ~minuend:"INSN_DEST_OFFSET" ~subtrahend:"INSN_SRC1_OFFSET"
+  ~true_target:"BRANCH_TAKE" ~false_target:"NEXT_INSTRUCTION";;
+
+(* Branch if src1 >= src2 (signed) *)
+signed_lt_cmp ~label:"OP_BGE"
+  ~minuend:"INSN_DEST_OFFSET" ~subtrahend:"INSN_SRC1_OFFSET"
+  ~true_target:"NEXT_INSTRUCTION" ~false_target:"BRANCH_TAKE";;
+
+(* Branch if src1 < src2 (unsigned) *)
+unsigned_lt_cmp ~label:"OP_BLTU"
+  ~minuend:"INSN_DEST_OFFSET" ~subtrahend:"INSN_SRC1_OFFSET"
+  ~true_target:"BRANCH_TAKE" ~false_target:"NEXT_INSTRUCTION";;
+
+(* Branch if src1 >= src2 (unsigned) *)
+unsigned_lt_cmp ~label:"OP_BGEU"
+  ~minuend:"INSN_DEST_OFFSET" ~subtrahend:"INSN_SRC1_OFFSET"
+  ~true_target:"NEXT_INSTRUCTION" ~false_target:"BRANCH_TAKE";;
+```

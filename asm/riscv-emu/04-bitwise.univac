@@ -1,0 +1,51 @@
+```
+let bitwise_reg_reg ~label ~bitwise_insn =
+  [ sprintf ">%s ENTAL INSN_SRC1_OFFSET" label
+  ; "ADDALK REG_0_LO"
+  ; sprintf "STRADR %s_OP_LO" label
+  ; "ADDALK 1"
+  ; sprintf "STRADR %s_OP_HI" label
+  ; "ENTB INSN_WORD2"
+  ; "ENTALB REG_0_HI"
+  ; sprintf ">%s_OP_HI %s 0" label bitwise_insn
+  ; "STRAL TMP_LO"
+  ; "ENTALB REG_0_LO"
+  ; sprintf ">%s_OP_LO %s 0" label bitwise_insn
+  ; "ENTAU TMP_LO"
+  ; "JP STORE_RESULT_PREMASKED"
+  ] |> emit
+
+let () =
+  bitwise_reg_reg ~label:"OP_AND" ~bitwise_insn:"SLCL";
+  bitwise_reg_reg ~label:"OP_OR" ~bitwise_insn:"SLSET";
+  bitwise_reg_reg ~label:"OP_XOR" ~bitwise_insn:"SLCP"
+
+let bitwise_imm ~op_label ~bitwise_insn ~upper_load =
+  let neg_label = op_label ^ "_NEG_IMM" in
+  [ (* Non-negative path *)
+    sprintf ">%s ENTAL INSN_WORD2" op_label
+  ; sprintf "JPALNG %s" neg_label
+  ; "ENTB INSN_SRC1_OFFSET"
+  ; upper_load
+  ; "ENTALB REG_0_LO"
+  ; sprintf "%s INSN_WORD2" bitwise_insn
+  ; "JP STORE_RESULT_PREMASKED"
+  ; ""
+  ; (* Negative path *)
+    sprintf ">%s ENTAL CONST_MASK_14BIT" neg_label
+  ; "STRAL IMM_UPPER"
+  ; "ENTB INSN_SRC1_OFFSET"
+  ; "ENTALB REG_0_HI"
+  ; sprintf "%s IMM_UPPER" bitwise_insn
+  ; "STRAL TMP_HI"
+  ; "ENTALB REG_0_LO"
+  ; sprintf "%s INSN_WORD2" bitwise_insn
+  ; "ENTAU TMP_HI"
+  ; "JP STORE_RESULT_PREMASKED"
+  ] |> emit
+
+let () =
+  bitwise_imm ~op_label:"OP_ANDI" ~bitwise_insn:"SLCL" ~upper_load:"ENTAU CONST_0";
+  bitwise_imm ~op_label:"OP_ORI" ~bitwise_insn:"SLSET" ~upper_load:"ENTAUB REG_0_HI";
+  bitwise_imm ~op_label:"OP_XORI" ~bitwise_insn:"SLCP" ~upper_load:"ENTAUB REG_0_HI"
+```

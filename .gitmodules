@@ -1,0 +1,3 @@
+[submodule "univac-1219-emu"]
+	path = univac-1219-emu
+	url = git@github.com:nathanfarlow/UNIVAC-1219.git

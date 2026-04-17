@@ -1,0 +1,6 @@
+(executable
+ (public_name tools)
+ (name main)
+ (libraries tools templating core core_unix.command_unix async async_unix)
+ (preprocess
+  (pps ppx_jane)))

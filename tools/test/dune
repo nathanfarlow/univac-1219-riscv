@@ -1,0 +1,8 @@
+(library
+ (name test_suite)
+ (libraries core async tools mini expect_test_helpers_async lithium)
+ (inline_tests
+  (deps
+   (glob_files ../../univac-riscv/*.univac)))
+ (preprocess
+  (pps ppx_jane)))

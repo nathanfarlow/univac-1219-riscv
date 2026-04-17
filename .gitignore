@@ -1,0 +1,13 @@
+.DS_Store
+
+# Build artifacts
+a.out
+*.o
+*.a
+*.so
+*.dylib
+
+# VS Code extension build artifacts
+univac-1219-vscode/node_modules/
+univac-1219-vscode/out/
+univac-1219-vscode/package-lock.json

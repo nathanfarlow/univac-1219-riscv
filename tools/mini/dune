@@ -1,0 +1,34 @@
+(library
+ (name mini)
+ (libraries core ctypes ctypes.foreign)
+ (ctypes
+  (external_library_name libmini)
+  (build_flags_resolver
+   (vendored
+    (c_flags -O2 -fPIC -Ilibmini)))
+  (headers
+   (include "mini_wrapper.h"))
+  (type_description
+   (instance Types)
+   (functor Type_description))
+  (function_description
+   (instance Functions)
+   (functor Function_description))
+  (generated_types Types_generated)
+  (generated_entry_point Mini_c))
+ (foreign_archives mini))
+
+(data_only_dirs libmini)
+
+(rule
+ (deps
+  (source_tree libmini))
+ (targets libmini.a dllmini.so)
+ (action
+  (no-infer
+   (progn
+    (chdir
+     libmini
+     (run make))
+    (copy libmini/libmini.a libmini.a)
+    (copy libmini/libmini.so dllmini.so)))))

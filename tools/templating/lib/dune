@@ -1,0 +1,6 @@
+(library
+ (public_name templating)
+ (name templating)
+ (libraries core async re str)
+ (preprocess
+  (pps ppx_jane)))

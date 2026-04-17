@@ -1,0 +1,6 @@
+; The instructions of the RISC-V program will be written here as a series of
+; DATA directives. Each instruction is represented by two consecutive unviac
+; words.
+>RISCV_PROGRAM %%PROGRAM%%
+
+END

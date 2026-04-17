@@ -1,0 +1,8 @@
+ORG &O750
+; Bootstrap: load target address into AL, jump to tracer
+ENTAL TARGET_ADDR
+JP &O1000
+>TARGET_ADDR DATA &O50000
+
+SADD &O750
+END

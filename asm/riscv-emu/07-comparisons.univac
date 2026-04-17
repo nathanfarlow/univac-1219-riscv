@@ -1,0 +1,110 @@
+>CONST_UNSIGNED_CMP_BIT DATA 65536  ; bit 34 (for unsigned comparisons)
+
+; STORE_TRUE is in 02-decode.univac (falls through to STORE_RESULT_LOWER)
+
+; Store 0 to register pointed by INSN_DEST_OFFSET (comparison false result)
+>STORE_FALSE ENTB INSN_DEST_OFFSET
+CLB REG_0_LO
+CLB REG_0_HI
+CL REG_0_LO
+JP NEXT_INSTRUCTION
+
+```
+let signed_lt_cmp ~label ~minuend ~subtrahend ~true_target ~false_target =
+  let diff_signs = label ^ "_DIFF_SIGNS" in
+  let slcp_insn = label ^ "_SLCP_SIGN" in
+  [ sprintf ">%s ENTAL %s" label subtrahend
+  ; "ADDALK REG_0_HI"
+  ; sprintf "STRADR %s" slcp_insn
+  ; sprintf "ENTB %s" minuend
+  ; "ENTALB REG_0_HI"
+  ; sprintf ">%s SLCP 0" slcp_insn
+  ; "SLCL CONST_SIGN_BIT_31"
+  ; sprintf "JPALNZ %s" diff_signs
+  ; (* Same signs: compute minuend - subtrahend, B still = minuend *)
+    "ENTAUB REG_0_HI"
+  ; "ENTALB REG_0_LO"
+  ; sprintf "ENTB %s" subtrahend
+  ; "SUBAB REG_0_LO"
+  ; sprintf "JPAUNG %s" true_target
+  ; sprintf "JP %s" false_target
+  ; ""
+  ; (* Different signs: check if minuend is negative, B still = minuend *)
+    sprintf ">%s ENTALB REG_0_HI" diff_signs
+  ; "SLCL CONST_SIGN_BIT_31"
+  ; sprintf "JPALNZ %s" true_target
+  ; sprintf "JP %s" false_target
+  ] |> emit
+
+let unsigned_lt_cmp ~label ~minuend ~subtrahend ~true_target ~false_target =
+  [ sprintf ">%s ENTB %s" label minuend
+  ; "ENTALB REG_0_HI"
+  ; "SLSET CONST_UNSIGNED_CMP_BIT"
+  ; "STRAL TMP_LO"
+  ; "ENTALB REG_0_LO"
+  ; "ENTAU TMP_LO"
+  ; sprintf "ENTB %s" subtrahend
+  ; "SUBAB REG_0_LO"
+  ; "LSHA 1"
+  ; sprintf "JPAUNG %s" false_target
+  ; sprintf "JP %s" true_target
+  ] |> emit
+
+let () =
+  (* dest = (src1 < src2) ? 1 : 0 (signed) *)
+  signed_lt_cmp ~label:"OP_SLT"
+    ~minuend:"INSN_SRC1_OFFSET" ~subtrahend:"INSN_WORD2"
+    ~true_target:"STORE_TRUE" ~false_target:"STORE_FALSE";
+
+  (* dest = (src1 < src2) ? 1 : 0 (unsigned) *)
+  unsigned_lt_cmp ~label:"OP_SLTU"
+    ~minuend:"INSN_SRC1_OFFSET" ~subtrahend:"INSN_WORD2"
+    ~true_target:"STORE_TRUE" ~false_target:"STORE_FALSE"
+```
+
+; dest = (src1 < imm) ? 1 : 0 (signed)
+>OP_SLTI ENTAL INSN_WORD2
+STRAL IMM_LOWER
+JPALNG SLTI_NEG
+CL IMM_UPPER
+
+>SLTI_COMPARE ENTB INSN_SRC1_OFFSET
+ENTALB REG_0_HI
+SLCP IMM_UPPER
+SLCL CONST_SIGN_BIT_31
+JPALNZ SLTI_DIFF_SIGNS
+ENTAUB REG_0_HI
+ENTALB REG_0_LO
+SUBA IMM_LOWER
+JPAUNG STORE_TRUE
+JP STORE_FALSE
+
+>SLTI_DIFF_SIGNS ENTAL IMM_UPPER
+SLCL CONST_SIGN_BIT_31
+JPALNZ STORE_FALSE
+JP STORE_TRUE
+
+>SLTI_NEG ENTAL CONST_MASK_14BIT
+STRAL IMM_UPPER
+JP SLTI_COMPARE
+
+; dest = (src1 < imm) ? 1 : 0 (unsigned)
+>OP_SLTIU ENTAL INSN_WORD2
+STRAL IMM_LOWER
+JPALNG SLTIU_NEG
+CL IMM_UPPER
+
+>SLTIU_COMPARE ENTB INSN_SRC1_OFFSET
+ENTALB REG_0_HI
+SLSET CONST_UNSIGNED_CMP_BIT
+STRAL TMP_LO
+ENTALB REG_0_LO
+ENTAU TMP_LO
+SUBA IMM_LOWER
+LSHA 1
+JPAUNG STORE_FALSE
+JP STORE_TRUE
+
+>SLTIU_NEG ENTAL CONST_MASK_14BIT
+STRAL IMM_UPPER
+JP SLTIU_COMPARE

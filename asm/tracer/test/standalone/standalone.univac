@@ -1,0 +1,195 @@
+ORG &O50000
+; Comprehensive test program for tracer
+; Tests: registers, memory ops, skips, jumps, bitwise, shifts, ICR/B interaction
+
+JP MAIN                     ; Entry point always at ORG
+
+; === Data Section ===
+>DATA_1 DATA &O123456
+>DATA_2 DATA &O654321
+>DATA_3 DATA 0
+>DATA_4 DATA 3              ; Counter for ISK
+>DATA_5 DATA &O707070       ; Mask for bitwise ops
+>DATA_6 DATA &O77           ; Small value
+
+; === Main Entry ===
+>MAIN ENTSR 0               ; Clear SR
+ENTICR 0                    ; Clear ICR
+
+; === Test AU/AL Registers ===
+ENTALK &O1234               ; AL = 0o1234
+ENTAU DATA_1                ; AU = (DATA_1) = 0o123456
+STRAL DATA_3                ; Store AL to DATA_3
+STRAU DATA_3                ; Store AU to DATA_3 (overwrite)
+ENTAL DATA_1                ; AL = 0o123456
+ADDAL DATA_6                ; AL = AL + 0o77
+
+; === Test B Register with different ICR values ===
+ENTICR 0                    ; ICR=0, B at addr 1
+ENTBK 100
+STRB DATA_3                 ; Store B=100
+ENTICR 3                    ; ICR=3, B at addr 4
+ENTBK 200
+STRB DATA_3                 ; Store B=200
+ENTICR 5                    ; ICR=5, B at addr 6
+ENTBK 300
+ENTICR 0                    ; Back to ICR=0
+
+; === Test B Persistence Across ICR Changes ===
+; Verify B[0] and B[6] are independent - switching ICR doesn't clobber values
+
+; Set B[0] = 100, B[6] = 200
+ENTICR 0
+ENTBK 100
+ENTICR 6
+ENTBK 200
+
+; Switch back to B[0], store it, verify it's still 100
+ENTICR 0
+STRB DATA_3                  ; DATA_3 = B[0], should be 100
+ENTAL DATA_3                 ; AL = B[0]
+SUBAL DATA_4                 ; DATA_4 = 3, so AL = 100 - 3 = 97
+JPALNZ B0_NONZERO            ; AL should be non-zero (97)
+JP TEST_FAIL
+>B0_NONZERO ENTICR 0         ; Continue (ICR already 0)
+
+; === Test Conditional Jumps (AL value tests) ===
+ENTALK 0
+JPALZ AL_IS_ZERO            ; Should jump (AL=0)
+JP TEST_FAIL
+>AL_IS_ZERO ENTALK 1
+JPALNZ AL_NOT_ZERO          ; Should jump (AL!=0)
+JP TEST_FAIL
+>AL_NOT_ZERO ENTALK &O7776   ; -1 in 12-bit signed (sign extended to 18-bit negative)
+JPALNG AL_NEGATIVE          ; Should jump (AL<0)
+JP TEST_FAIL
+>AL_NEGATIVE ENTALK &O1777   ; Positive (max 12-bit positive)
+JPALP AL_POSITIVE           ; Should jump (AL>0)
+JP TEST_FAIL
+>AL_POSITIVE ADDALK 0         ; Continue
+
+; === Test AU Conditional Jumps ===
+ENTAU DATA_6                ; AU = small positive
+JPAUP AU_POS                ; Should jump (AU>0)
+JP TEST_FAIL
+>AU_POS ENTALK 0
+ENTAU DATA_3                ; Load whatever's in DATA_3
+JPAUNZ AU_NOTZ              ; Should jump if AU!=0
+JP AU_WAS_ZERO
+>AU_NOTZ ADDALK 1
+>AU_WAS_ZERO ADDALK 1
+
+; === Test Skip Instructions ===
+; ISK: decrement (y) until zero, then skip
+ENTALK 5
+STRAL DATA_4                ; DATA_4 = 5
+>ISK_LOOP ADDALK 1          ; Increment AL each iteration
+ISK DATA_4                  ; Decrement DATA_4, skip when zero
+JP ISK_LOOP                 ; Loop back if not zero
+; After loop: AL should have been incremented 5 times
+
+; BSK: increment B until equal to (y), then skip
+ENTICR 0
+ENTBK 0                     ; B = 0
+ENTALK 3
+STRAL DATA_4                ; DATA_4 = 3
+>BSK_LOOP ADDALK 1
+BSK DATA_4                  ; If B != (DATA_4), B++; else skip
+JP BSK_LOOP
+; After: B = 3
+
+; === Test Bitwise Operations ===
+ENTALK &O123456
+ENTAU DATA_5                ; AU = 0o707070 (mask)
+SLCL DATA_5                 ; AL = AL & (DATA_5) = 0o103050
+ENTALK &O123456
+SLSU DATA_2                 ; Selective substitute using AU as mask
+ENTALK &O000000
+SLSET DATA_5                ; AL = AL | (DATA_5) = 0o707070
+ENTALK &O777777
+SLCP DATA_5                 ; AL = AL XOR (DATA_5)
+
+; === Test Shift Operations ===
+ENTALK &O100000             ; Single bit set
+RSHA 3                      ; Right shift A by 3
+ENTALK &O000001
+LSHA 6                      ; Left shift A by 6
+
+; === Test JP with SR active ===
+ENTSR &O15                  ; SR = bank 5 active
+ENTALK 1                    ; Marker
+JP TEST_SR_JUMP
+>TEST_SR_FAIL JP TEST_FAIL
+>TEST_SR_JUMP ENTSR 0       ; Clear SR
+ADDALK 1
+
+; === Test JPB ===
+ENTBK 2                     ; B = 2
+JPB JPB_BASE                ; Jump to JPB_BASE + 2
+>JPB_BASE JP TEST_FAIL      ; +0: fail
+JP TEST_FAIL                ; +1: fail
+JP JPB_OK                   ; +2: success
+JP TEST_FAIL                ; +3: fail
+>JPB_OK ADDALK 1
+
+; === Test BJP loop ===
+ENTBK 4                     ; B = 4
+>BJP_LOOP ADDALK 1
+BJP BJP_LOOP                ; Decrement B, jump if B was != 0
+; After: B=0, AL incremented 4 times
+
+; === Test RJP (subroutine call) ===
+RJP SUBR_1
+ADDALK 1                    ; After return
+
+; === Test IJP ===
+IJP IJP_PTR
+>AFTER_IJP ADDALK 1
+
+; === Test IRJP ===
+IRJP IRJP_PTR
+>AFTER_IRJP ADDALK 1
+
+; === Test IRJPB ===
+ENTBK 1
+IRJPB IRJPB_BASE
+>AFTER_IRJPB ADDALK 1
+
+; === Test indexed memory access ===
+ENTBK 1
+ENTALB DATA_1               ; AL = (DATA_1 + B) = (DATA_2)
+ADDALK 1
+
+; === Test store with index ===
+ENTALK &O111111
+STRALB DATA_2               ; Store to DATA_2 + B = DATA_3
+
+; === Success - halt ===
+>TEST_DONE JP TEST_DONE
+
+; === Failure handler ===
+>TEST_FAIL ENTALK &O777777  ; Load -0 as error marker
+>FAIL_LOOP JP FAIL_LOOP
+
+; === Subroutines ===
+>SUBR_1 DATA 0              ; Return address stored here
+ADDALK 10                   ; Do some work
+IJP SUBR_1                  ; Return
+
+>SUBR_IRJP DATA 0
+ADDALK 20
+IJP SUBR_IRJP
+
+>SUBR_IRJPB DATA 0
+ADDALK 30
+IJP SUBR_IRJPB
+
+; === Pointers ===
+>IJP_PTR DATA AFTER_IJP
+>IRJP_PTR DATA SUBR_IRJP
+>IRJPB_BASE DATA 0          ; +0 (not used with B=1)
+DATA SUBR_IRJPB             ; +1 (used when B=1)
+
+SADD &O50000
+
+END

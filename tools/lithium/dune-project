@@ -1,0 +1,5 @@
+(lang dune 3.0)
+
+(package
+ (name lithium)
+ (depends ocaml dune core))

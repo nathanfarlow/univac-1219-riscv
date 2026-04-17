@@ -1,0 +1,94 @@
+>MASK_SHAMT DATA 31 ; 0x1f. Mask shift amount to 5 bits
+
+; LSHA is circular, so we mask bits that cycled around
+; Lower word: clear lowest i bits from 18-bit mask
+>SLL_AL_MASKS ```
+List.init 32 ~f:(fun i ->
+  sprintf "DATA &O%06o" (0o777777 land lnot ((1 lsl i) - 1))
+) |> emit
+```
+
+; Upper word: clear lowest max(0, i-18) bits from 14-bit mask
+>SLL_AU_MASKS ```
+List.init 32 ~f:(fun i ->
+  sprintf "DATA &O%05o" (0o37777 land lnot ((1 lsl (max 0 (i - 18))) - 1))
+) |> emit
+```
+
+```
+let mask () =
+  [ "STRAL TMP_LO"
+  ; "STRAU TMP_HI"
+  ; "ENTALB SLL_AU_MASKS"
+  ; "SLCL TMP_HI"
+  ; "STRAL TMP_HI"
+  ; "ENTAU TMP_HI"
+  ; "ENTALB SLL_AL_MASKS"
+  ; "SLCL TMP_LO"
+  ; "JP STORE_RESULT_PREMASKED"
+  ] |> emit
+```
+
+; dest = src1 << (src2 & 0x1F)
+>OP_SLL ENTB INSN_WORD2
+ENTALB REG_0_LO
+SLCL MASK_SHAMT
+STRAL TMP_LO ; shift amount
+ADDALK &O4700
+STRADR SLL_LSHA_INSN
+``` load_src1_to_A () ```
+ENTB TMP_LO  ; shift amount
+
+; Self modifying code!
+>SLL_LSHA_INSN LSHA 0
+``` mask () ```
+
+; dest = src1 << shamt
+>OP_SLLI ENTAL INSN_WORD2
+ADDALK &O4700
+STRADR SLLI_LSHA_INSN
+``` load_src1_to_A () ```
+ENTB INSN_WORD2
+
+>SLLI_LSHA_INSN LSHA 0
+``` mask () ```
+
+; dest = src1 >> (src2 & 0x1F)
+>OP_SRL ENTB INSN_WORD2
+ENTALB REG_0_LO
+SLCL MASK_SHAMT
+ADDALK &O4300
+STRADR SRL_RSHA_INSN
+``` load_src1_to_A () ```
+
+>SRL_RSHA_INSN RSHA 0
+JP STORE_RESULT_PREMASKED
+
+; dest = src1 >> shamt
+>OP_SRLI ENTAL INSN_WORD2
+STRAL SRLI_RSHA_INSN
+``` load_src1_to_A () ```
+
+>SRLI_RSHA_INSN RSHA 0
+JP STORE_RESULT_PREMASKED
+
+; dest = src1 >> (src2 & 0x1F)
+>OP_SRA ENTB INSN_WORD2
+ENTALB REG_0_LO
+SLCL MASK_SHAMT
+ADDALK &O4304
+STRADR SRA_RSHA_INSN
+``` load_src1_to_A () ```
+LSHA 4 ; Shift 4 so that RSHA (36 bit) picks up 32 bit sign bit
+
+>SRA_RSHA_INSN RSHA 0
+JP STORE_RESULT
+
+; dest = src1 >> shamt
+>OP_SRAI ENTAL INSN_WORD2
+STRAL SRAI_RSHA_INSN
+``` load_src1_to_A () ```
+LSHA 4
+
+>SRAI_RSHA_INSN RSHA 0
+JP STORE_RESULT

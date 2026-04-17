@@ -1,0 +1,6 @@
+(library
+ (name tools)
+ (libraries async core mini templating)
+ (inline_tests)
+ (preprocess
+  (pps ppx_jane)))

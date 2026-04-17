@@ -1,0 +1,37 @@
+```
+let emit lines = lines |> String.concat_lines |> print_string
+
+let load_src1_to_A () =
+  [ "ENTB INSN_SRC1_OFFSET"
+  ; "ENTALB REG_0_LO"
+  ; "ENTAUB REG_0_HI"
+  ] |> emit
+```
+
+; dest = src1 + src2
+>OP_ADD ``` load_src1_to_A () ```
+ENTB INSN_WORD2
+ADDAB REG_0_LO
+SUBA CONST_1
+JP STORE_RESULT
+
+; dest = src1 - src2
+>OP_SUB ``` load_src1_to_A () ```
+ENTB INSN_WORD2
+SUBAB REG_0_LO
+JP STORE_RESULT
+
+; dest = src1 + immediate
+; INSN_WORD2 is encoded as (immediate - 1); the +1 baked into ADDA absorbs
+; the decrement, so we no longer need to compensate with SUBA CONST_1.
+>OP_ADDI ENTB INSN_SRC1_OFFSET
+ENTAL INSN_WORD2
+JPALNG ADDI_NEG_IMM
+ENTAU CONST_0
+ADDAB REG_0_LO
+JP STORE_RESULT
+
+>ADDI_NEG_IMM ENTAU CONST_MASK_18BIT
+ADDAB REG_0_LO
+JP STORE_RESULT
+

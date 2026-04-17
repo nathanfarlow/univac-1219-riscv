@@ -1,0 +1,24 @@
+(lang dune 3.19)
+
+(using ctypes 0.3)
+
+(name tools)
+
+(generate_opam_files true)
+
+(source
+ (github username/reponame))
+
+(authors "Nathan Farlow <natethegreatest11@gmail.com>")
+
+(license LICENSE)
+
+(documentation https://url/to/documentation)
+
+(package
+ (name tools)
+ (synopsis "RISC-V development tools")
+ (description "RISC-V development tools")
+ (depends ocaml core async ctypes-foreign expect_test_helpers_async))
+
+; See the complete stanza docs at https://dune.readthedocs.io/en/stable/reference/dune-project/index.html

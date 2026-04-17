@@ -1,0 +1,23 @@
+# Development Makefile using native gcc
+
+CC = gcc
+CFLAGS = -Wall -Wextra -O2 -g
+SRCS = main.c sdl_stubs.c rom_data.c
+OBJS = $(SRCS:.c=.o)
+TARGET = smolnes_dev
+
+all: $(TARGET)
+
+$(TARGET): $(OBJS)
+	$(CC) $(CFLAGS) -o $@ $^
+
+%.o: %.c
+	$(CC) $(CFLAGS) -c -o $@ $<
+
+clean:
+	rm -f $(OBJS) $(TARGET)
+
+run: $(TARGET)
+	./$(TARGET)
+
+.PHONY: all clean run

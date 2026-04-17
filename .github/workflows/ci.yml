@@ -1,0 +1,54 @@
+name: CI
+
+on: [push, pull_request]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Generate App Token
+      id: app-token
+      uses: actions/create-github-app-token@v1
+      with:
+        app-id: ${{ secrets.APP_ID }}
+        private-key: ${{ secrets.APP_PRIVATE_KEY }}
+        owner: ${{ github.repository_owner }}
+
+    - name: Checkout code
+      uses: actions/checkout@v4
+      with:
+        submodules: recursive
+        token: ${{ steps.app-token.outputs.token }}
+
+    - name: Set up Docker Buildx
+      uses: docker/setup-buildx-action@v3
+
+    - name: Build Docker image
+      uses: docker/build-push-action@v5
+      with:
+        context: .
+        push: false
+        load: true
+        tags: riscv-univac:latest
+        cache-from: type=gha
+        cache-to: type=gha,mode=max
+
+    - name: Make workspace writable for Docker
+      run: chmod -R a+w .
+
+    - name: Build dependencies
+      run: |
+        docker run --rm \
+          -v "${{ github.workspace }}:/workspace" \
+          -w /workspace \
+          riscv-univac:latest \
+          bash -l -c "cd tools && dune build && cd ../univac-1219-emu && cargo build --release"
+
+    - name: Run verification tests
+      run: |
+        docker run --rm \
+          -v "${{ github.workspace }}:/workspace" \
+          -w /workspace \
+          riscv-univac:latest \
+          bash -l -c "./run-tests.sh"

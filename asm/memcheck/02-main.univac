@@ -1,0 +1,57 @@
+; === Memory check ===
+; Writes address as pattern to each word, reads back, compares.
+; B is offset from page base (0o50000). Effective addr = 0o50000 + B.
+; Start offset = 32000 - 20480 = 11520 (0o26400).
+; Prints OK every 1000 words with actual address.
+
+>PAGE_BASE DATA &O50000
+>START_OFF DATA 11520
+>OK_MAX DATA 999
+>OK_CNT DATA 0
+>EXPECT DATA 0
+>ADDR DATA 0
+
+>MAIN ENTALK &O13
+RJP EXFAL
+
+``` print_string "MEMCHECK FROM " ```
+ENTAL START_OFF
+ADDAL PAGE_BASE
+RJP OUTOCT
+RJP CRLF
+
+ENTB START_OFF
+ENTAL OK_MAX
+STRAL OK_CNT
+
+>LOOP STRB EXPECT
+ENTAL EXPECT
+STRALB 0
+ENTALB 0
+CMAL EXPECT
+JPALNZ ERROR
+
+ENTBKB 1
+ISK OK_CNT
+JP LOOP
+
+; 1000 words OK - print actual address
+STRB ADDR
+ENTAL ADDR
+ADDAL PAGE_BASE
+RJP OUTOCT
+``` print_string " OK" ```
+RJP CRLF
+ENTAL OK_MAX
+STRAL OK_CNT
+JP LOOP
+
+>ERROR STRB ADDR
+``` print_string "ERR AT " ```
+ENTAL ADDR
+ADDAL PAGE_BASE
+RJP OUTOCT
+RJP CRLF
+
+>HALT JP HALT
+END

@@ -1,0 +1,46 @@
+; --- Negative zero normalization tests ---
+; Tests all combos of +0 (0o000000) and -0 (0o777777) for ADDAL and SUBAL.
+; Also tests non-zero inputs that produce -0.
+
+>NEG0_TMP DATA 0
+
+>NEG0_TEST DATA 0
+
+; All combos of {+0, -0} x {+0, -0} for ADDAL and SUBAL
+```
+let vals = [(" 0", "0"); ("-0", "&O777777")]
+let ops = [("ADD", "ADDAL"); ("SUB", "SUBAL")]
+
+let () =
+  List.iter ops ~f:(fun (label, insn) ->
+    List.iter vals ~f:(fun (al_name, al_asm) ->
+      List.iter vals ~f:(fun (mem_name, mem_asm) ->
+        print_string (sprintf "%s %s %s: " label al_name mem_name);
+        printf "ENTALK %s\nSTRAL NEG0_TMP\nENTALK %s\n%s NEG0_TMP\nRJP OUTOCT\nRJP CRLF\n"
+          mem_asm al_asm insn)))
+```
+
+; Non-zero inputs that sum to -0
+``` print_string "ADD NO CARRY: " ```
+ENTALK &O377777
+STRAL NEG0_TMP
+ENTALK &O400000
+ADDAL NEG0_TMP
+RJP OUTOCT
+RJP CRLF
+
+``` print_string "ADD CARRY:    " ```
+ENTALK &O777777
+STRAL NEG0_TMP
+ENTALK &O777777
+ADDAL NEG0_TMP
+RJP OUTOCT
+RJP CRLF
+
+; Can we even print -0 directly?
+``` print_string "RAW -0:       " ```
+ENTALK &O777777
+RJP OUTOCT
+RJP CRLF
+
+IJP NEG0_TEST

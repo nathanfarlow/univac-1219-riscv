@@ -1,0 +1,205 @@
+```
+type test =
+  | Mem of string
+  | Imm of string * int * int  (* instr, opcode, max_k *)
+  | Zero of string
+
+let instr = function Mem i | Imm (i, _, _) | Zero i -> i
+
+let print_asm s =
+  s |> String.to_list
+  |> List.map ~f:(fun c -> sprintf "ENTALK %d\nRJP OUTAL" (Char.to_int c))
+  |> String.concat ~sep:"\n"
+
+let num_iters = 24576   (* loaded via DATA word + ENTAL to avoid ENTALK 12-bit sign-extension limit *)
+let scratch_size = 64   (* words; must be even. B cycles 0,2,...,scratch_size-2 *)
+
+(* Shared data section - emitted once before all tests *)
+let shared_data =
+  [ "EVEN"
+  ; ">ACCUM_LO DATA 0"
+  ; ">ACCUM_HI DATA 0"
+  ; "EVEN"
+  ; ">SCRATCH DATA 0"
+  ] @ List.init (scratch_size - 1) ~f:(fun _ -> "DATA 0") @
+  [ ">TEST_N DATA 0"
+  ; ">CLR_N DATA 0"
+  ; sprintf ">B_WRAP_N DATA %d" (scratch_size / 2 - 1)
+  ]
+
+(* Clear scratch subroutine: zeros SCRATCH array, resets B=0 and B_WRAP_N *)
+let clr_scratch =
+  [ ">CLR_SCRATCH DATA 0"
+  ; sprintf "ENTALK %d" (scratch_size / 2 - 1)
+  ; "STRAL CLR_N"
+  ; "STRAL B_WRAP_N"
+  ; "ENTBK 0"
+  ; ">CLR_LOOP CLB SCRATCH"
+  ; "CLB SCRATCH+1"
+  ; "ENTBKB 2"
+  ; "ISK CLR_N"
+  ; "JP CLR_LOOP"
+  ; "ENTBK 0"
+  ; "IJP CLR_SCRATCH"
+  ]
+
+let () =
+  (shared_data @ clr_scratch)
+  |> String.concat ~sep:"\n"
+  |> print_endline
+
+let test_entry ~seed ~num_iters =
+  [ sprintf ">INSN_ITERS DATA %d" (num_iters - 1)
+  ; ">INSN_TEST DATA 0"
+  ; sprintf "ENTALK %d" seed
+  ; "STRAL RNG_STATE"
+  ; "RJP CLR_SCRATCH"
+  ; "CL ACCUM_LO"
+  ; "CL ACCUM_HI"
+  ; "ENTAL INSN_ITERS"
+  ; "STRAL TEST_N"
+  ]
+
+let mem_loop =
+  [ ">INSN_LOOP RJP RAND"
+  ; "STRAL SCRATCH"
+  ; "STRALB SCRATCH"
+  ; "RJP RAND"
+  ; "STRAL SCRATCH+1"
+  ; "STRALB SCRATCH+1"
+  ; "ENTAL ACCUM_LO"
+  ; "ENTAU ACCUM_HI"
+  ; "THEINSN SCRATCH"
+  ; "STRAL ACCUM_LO"
+  ; "STRAU ACCUM_HI"
+  ; "RJP RAND"
+  ; "ADDAL ACCUM_LO"
+  ; "STRAL ACCUM_LO"
+  ; "RJP RAND"
+  ; "ADDAL ACCUM_HI"
+  ; "STRAL ACCUM_HI"
+  ; "ENTBKB 2"
+  ; "ISK B_WRAP_N"
+  ; "JP INSN_NOWRAP"
+  ; "ENTBK 0"
+  ; sprintf "ENTALK %d" (scratch_size / 2 - 1)
+  ; "STRAL B_WRAP_N"
+  ; ">INSN_NOWRAP ISK TEST_N"
+  ; "JP INSN_LOOP"
+  ]
+
+let imm_data ~opcode ~max_k =
+  [ sprintf ">INSN_OPCODE DATA &O%o" opcode
+  ; sprintf ">INSN_K DATA %d" (max_k - 1)
+  ; sprintf ">INSN_MAX DATA %d" (max_k - 1)
+  ]
+
+let imm_loop =
+  [ "ENTAL INSN_MAX"
+  ; "STRAL INSN_K"
+  ; ">INSN_LOOP ENTAL INSN_K"
+  ; "SLSET INSN_OPCODE"
+  ; "STRAL INSN_DYN"
+  ; "ENTAL ACCUM_LO"
+  ; "ENTAU ACCUM_HI"
+  ; ">INSN_DYN THEINSN 0"
+  ; "STRAL ACCUM_LO"
+  ; "STRAU ACCUM_HI"
+  ; "RJP RAND"
+  ; "ADDAL ACCUM_LO"
+  ; "STRAL ACCUM_LO"
+  ; "RJP RAND"
+  ; "ADDAL ACCUM_HI"
+  ; "STRAL ACCUM_HI"
+  ; "ISK INSN_K"
+  ; "JP INSN_K_OK"
+  ; "ENTAL INSN_MAX"
+  ; "STRAL INSN_K"
+  ; ">INSN_K_OK ISK TEST_N"
+  ; "JP INSN_LOOP"
+  ]
+
+let zero_loop =
+  [ ">INSN_LOOP ENTAL ACCUM_LO"
+  ; "ENTAU ACCUM_HI"
+  ; "THEINSN"
+  ; "STRAL ACCUM_LO"
+  ; "STRAU ACCUM_HI"
+  ; "RJP RAND"
+  ; "ADDAL ACCUM_LO"
+  ; "STRAL ACCUM_LO"
+  ; "RJP RAND"
+  ; "ADDAL ACCUM_HI"
+  ; "STRAL ACCUM_HI"
+  ; "ISK TEST_N"
+  ; "JP INSN_LOOP"
+  ]
+
+let output i =
+  [ print_asm (i ^ ": ")
+  ; "ENTAL ACCUM_HI"
+  ; "RJP OUTOCT"
+  ; "ENTALK 32"
+  ; "RJP OUTAL"
+  ; "ENTAL ACCUM_LO"
+  ; "RJP OUTOCT"
+  ; "RJP CRLF"
+  ; "IJP INSN_TEST"
+  ]
+
+let emit ~instr lines =
+  lines
+  |> String.concat ~sep:"\n"
+  |> String.substr_replace_all ~pattern:"THEINSN" ~with_:instr
+  |> String.substr_replace_all ~pattern:"INSN_" ~with_:(instr ^ "_")
+
+let gen test ~num_iters =
+  let i = instr test in
+  let seed = String.hash i land 0xFFF in
+  let extra_data, loop = match test with
+    | Mem _ -> [], mem_loop
+    | Imm (_, opcode, max_k) -> imm_data ~opcode ~max_k, imm_loop
+    | Zero _ -> [], zero_loop
+  in
+  [ [sprintf "; %s test" i]
+  ; extra_data
+  ; test_entry ~seed ~num_iters
+  ; loop
+  ; output i
+  ]
+  |> List.concat
+  |> emit ~instr:i
+
+let tests =
+  [ Mem "ADDAL"
+  ; Mem "ADDA"
+  ; Mem "ADDAB"
+  ; Mem "SUBAL"
+  ; Mem "SUBA"
+  ; Mem "SUBAB"
+  ; Mem "MULAL"
+  ; Mem "MULALB"
+  ; Mem "DIVA"
+  ; Mem "DIVAB"
+  ; Mem "ADDALB"
+  ; Mem "SUBALB"
+  ; Mem "SLSET"
+  ; Mem "SLCL"
+  ; Mem "SLCP"
+  ; Mem "SLSU"
+  ; Mem "SLSUB"
+  ; Imm ("ADDALK", 0o710000, 4096)
+  ; Imm ("LSHAL", 0o504600, 18)
+  ; Imm ("LSHAU", 0o504500, 18)
+  ; Imm ("RSHAL", 0o504200, 18)
+  ; Imm ("RSHAU", 0o504100, 18)
+  ; Imm ("LSHA", 0o504700, 36)
+  ; Imm ("RSHA", 0o504300, 36)
+  ; Zero "CPA"
+  ; Zero "CPAL"
+  ; Zero "CPAU"
+  ; Zero "RND"
+  ]
+
+let () = List.iter tests ~f:(fun t -> gen t ~num_iters |> print_endline)
+```

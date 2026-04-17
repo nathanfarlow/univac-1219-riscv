@@ -1,0 +1,24 @@
+>MAIN ENTALK &O13
+RJP EXFAL
+```
+let tests =
+  [ "ADDAL"; "ADDA"; "ADDAB"
+  ; "SUBAL"; "SUBA"; "SUBAB"
+  ; "MULAL"; "MULALB"
+  ; "DIVA"; "DIVAB"
+  ; "ADDALB"; "SUBALB"
+  ; "SLSET"; "SLCL"; "SLCP"
+  ; "SLSU"; "SLSUB"
+  ; "ADDALK"
+  ; "LSHAL"; "LSHAU"; "RSHAL"; "RSHAU"
+  ; "LSHA"; "RSHA"
+  ; "CPA"; "CPAL"; "CPAU"
+  ; "RND"
+  ]
+
+let () = List.iter tests ~f:(fun t -> printf "RJP %s_TEST\n" t)
+```
+RJP NEG0_TEST
+
+>DONE STOP 5
+END

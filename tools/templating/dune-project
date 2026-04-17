@@ -1,0 +1,5 @@
+(lang dune 3.0)
+
+(package
+ (name templating)
+ (depends ocaml dune core async re))

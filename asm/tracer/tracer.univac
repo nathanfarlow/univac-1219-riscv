@@ -1,0 +1,617 @@
+ORG &O1000
+JP TRACER_MAIN
+
+; UNIVAC 1219 software tracer. Maybe someday I'll make it an interactive debugger.
+;
+; Executes a target program instruction-by-instruction, printing CPU state
+; before each instruction (one line per instruction, space-separated octal):
+;
+;   PC     INSN   AU     AL     B      SR     ICR
+;   050000 700005 000000 000000 000000 000000 000000
+;   050001 120100 000000 000005 000000 000000 000000
+;   050002 340010 000000 000105 000000 000000 000000
+;
+; === Flow ===
+;
+; TRACER_MAIN receives the start address in AL, saves it as TRACED_PC, zeros
+; all traced registers, and sets interrupt lockout.
+;
+; TRACE_LOOP sets SR from the PC bank and fetches the instruction at TRACED_PC.
+; It prints the current state (PC INSN AU AL B SR ICR), decodes the instruction,
+; dispatches to the appropriate handler, executes with traced state, saves
+; results, updates TRACED_PC, and repeats.
+;
+; === Instruction handling ===
+;
+; Unsupported: interrupt instructions (RTC, WTFI, RIL, EXL, IJPEI) and compare
+;   instructions (CMAL, CMALB, CMSK, CMSKB) print the instruction and halt.
+;
+; Special:
+;   - ENTSR: extract k-field, save to TRACED_SR, PC += 1
+;   - ENTICR: extract k-field, save to TRACED_ICR, read new B register, PC += 1
+;   - I/O (IN, OUT, EXF): fetch 3-word sequence, restore state, execute, PC += 3
+;
+; Jumps: rewrite destination to JUMP_TAKEN/JUMP_NOT_TAKEN handlers, restore
+;   traced AU/AL/B/ICR, let CPU evaluate condition with real registers.
+;   - JP/JPB: direct jump (JPB computes y+B first)
+;   - conditional (60-67), BJP: rewrite y-field, keep original opcode
+;   - IJP: read pointer from (y), jump to full 18-bit address
+;   - RJP: write return address to y, jump to y+1
+;   - IRJP/IRJPB: read pointer from (y), write return address, jump to pointer+1
+;
+; Normal: EXEC_WRAPPER builds SR from TRACED_SR or the PC bank, restores traced
+;   AU/AL/B/ICR, and executes the instruction. Skip detection uses a JP placed
+;   right after EXEC_INSN: if the instruction skips, JP is skipped and we fall
+;   through to the skip path (PC += 2); otherwise JP executes (PC += 1).
+;   This works because JP uses P-based addressing (y=up) and the tracer's P
+;   is in bank 0 where the handler labels live.
+;
+; y=up-only: instructions that only support P-based addressing (ISK, BSK,
+;   SLSET, SLCL, SLCP, STRICR, STRSR) have their operand pre-fetched from
+;   the traced bank into a scratch location, and the y-field is rewritten to
+;   point to scratch before execution. Read-write instructions (ISK, STRICR,
+;   STRSR) write the scratch value back afterward.
+
+; === I/O Subroutines ===
+>EXFWD DATA 0
+>EXFAL DATA 0
+STRAL EXFWD
+EXF 7
+DATA EXFWD
+DATA EXFWD
+>EXF_WAIT SKPFIN 7
+JP EXF_WAIT
+IJP EXFAL
+
+>OUTWD DATA 0
+>OUTAL DATA 0
+STRAL OUTWD
+OUT 7
+DATA OUTWD
+DATA OUTWD
+>OUT_WAIT SKPOIN 7
+JP OUT_WAIT
+IJP OUTAL
+
+>CRLF DATA 0
+ENTALK &O13
+RJP EXFAL
+ENTALK &O15
+RJP OUTAL
+ENTALK &O12
+RJP OUTAL
+IJP CRLF
+
+; === OUTOCT - Print AL as 6-digit octal ===
+>OUTOCT_SAVE_AL DATA 0
+>OUTOCT_SAVE_AU DATA 0
+>OUTOCT_COUNT DATA 0
+>OUTOCT DATA 0
+STRAL OUTOCT_SAVE_AL
+STRAU OUTOCT_SAVE_AU
+LSHA 18
+ENTALK 5
+STRAL OUTOCT_COUNT
+>OUTOCT_LOOP ENTALK 0
+LSHA 3
+ADDALK &O60
+RJP OUTAL
+ISK OUTOCT_COUNT
+JP OUTOCT_LOOP
+ENTAL OUTOCT_SAVE_AL
+ENTAU OUTOCT_SAVE_AU
+IJP OUTOCT
+
+>OUTSP DATA 0
+ENTALK &O40
+RJP OUTAL
+IJP OUTSP
+
+; === OUTOCT_SP - Print AL as 6-digit octal followed by space ===
+>OUTOCT_SP DATA 0
+RJP OUTOCT
+RJP OUTSP
+IJP OUTOCT_SP
+
+; === Tracer State ===
+>TRACED_PC DATA &O50000
+>TRACED_AU DATA 0
+>TRACED_AL DATA 0
+>TRACED_B DATA 0
+>TRACED_SR DATA 0
+>TRACED_ICR DATA 0
+>MASK_12BIT DATA &O7777
+>FETCH_OFFSET DATA 0
+>TRACER_SAVE_AU DATA 0
+>TRACER_SAVE_AL DATA 0
+>PC_DELTA DATA 0
+>ORIG_INSN DATA 0
+>ORIG_TARGET DATA 0
+>MASK_OPCODE DATA &O770000
+
+; === Constants ===
+>MASK_FMT2 DATA &O777700
+>CONST_RTC DATA &O501400
+>CONST_WTFI DATA &O502400
+>CONST_RIL DATA &O503000
+>CONST_EXL DATA &O503200
+>MASK_IGNORE_BIT6 DATA &O777677
+>CONST_ENTSR DATA &O507300
+>CONST_ENTICR DATA &O507200
+>CONST_IN DATA &O501100
+>CONST_OUT DATA &O501200
+>CONST_EXF DATA &O501300
+>CONST_JP DATA &O340000
+>MASK_K DATA &O77
+>MASK_LOWER_3 DATA &O7
+
+>UP_SCRATCH DATA 0
+
+; === Jump Execution (no SR needed) ===
+>EXEC_JUMP_WRAPPER DATA 0
+>EXEC_INSN_JUMP DATA 0
+JP JUMP_NOT_TAKEN
+
+; Common register save for all jump outcomes
+; ICR = TRACED_ICR here (set by EXEC_JUMP_ENTICR before jump executed)
+; Jump instructions don't modify AU/AL/B/ICR/SR, except BJP decrements B.
+>SAVE_JUMP_REGS DATA 0
+STRAL TRACED_AL
+STRAU TRACED_AU
+STRB TRACED_B
+ENTICR 0                     ; Restore tracer's ICR
+IJP SAVE_JUMP_REGS
+
+>JUMP_TAKEN RJP SAVE_JUMP_REGS
+ENTAL TRACED_PC
+SLCL MASK_OPCODE
+ADDAL ORIG_TARGET
+STRAL TRACED_PC
+JP AFTER_EXECUTE
+
+>JUMP_NOT_TAKEN RJP SAVE_JUMP_REGS
+ENTAL TRACED_PC
+ADDALK 1
+STRAL TRACED_PC
+JP AFTER_EXECUTE
+
+>JUMP_TAKEN_FULL RJP SAVE_JUMP_REGS
+ENTAL ORIG_TARGET
+STRAL TRACED_PC
+JP AFTER_EXECUTE
+
+; === Common Jump Exit (builds JP instruction and executes) ===
+; ORIG_TARGET must be set before jumping here
+>EXEC_JP_TAKEN ENTALK JUMP_TAKEN
+JP EXEC_JP_COMMON
+>EXEC_JP_TAKEN_FULL ENTALK JUMP_TAKEN_FULL
+>EXEC_JP_COMMON SLCL MASK_12BIT
+ADDAL CONST_JP
+STRAL EXEC_INSN_JUMP
+JP EXEC_JUMP
+
+; === Non-Jump Execution (skip detection via JP) ===
+
+>EXEC_WRAPPER DATA 0
+; Compute SR for execution: use TRACED_SR if active, else derive from PC bank
+ENTAL TRACED_SR
+SLCL MASK_K                   ; SR is 6 bits
+JPALNZ BUILD_EXEC_ENTSR       ; If TRACED_SR!=0, AL has it
+ENTAL TRACED_PC
+RSHA 12
+SLCL MASK_LOWER_3
+ADDALK &O10                   ; Set active bit (bank | 0o10)
+>BUILD_EXEC_ENTSR ADDAL CONST_ENTSR
+STRAL EXEC_ENTSR
+
+; Build ENTICR instruction to set ICR = TRACED_ICR
+ENTAL TRACED_ICR
+SLCL MASK_LOWER_3
+ADDAL CONST_ENTICR
+STRAL EXEC_ENTICR
+
+; Set ICR = TRACED_ICR and load B register
+>EXEC_ENTICR DATA 0           ; ICR = TRACED_ICR
+ENTB TRACED_B                 ; Load TRACED_B into B (selected by ICR)
+
+; Restore traced AL/AU
+ENTAL TRACED_AL
+ENTAU TRACED_AU
+
+; Execute with correct ICR and SR
+>EXEC_ENTSR DATA 0
+>EXEC_INSN DATA 0
+
+; Skip detection: JP uses y=up (P-based), so it correctly targets our label.
+; If instruction skipped, this JP is skipped and we fall through to skip path.
+JP EXEC_NO_SKIP
+
+; === Instruction DID skip ===
+ENTSR 0                       ; Clear SR before saving to tracer bank
+STRAL TRACED_AL
+ENTALK 2
+JP EXEC_SAVE
+
+; === Instruction did NOT skip ===
+>EXEC_NO_SKIP ENTSR 0
+STRAL TRACED_AL
+ENTALK 1
+
+>EXEC_SAVE STRAL PC_DELTA
+STRAU TRACED_AU
+STRB TRACED_B                 ; ICR is still TRACED_ICR (no insn changed it)
+ENTICR 0                      ; Restore tracer's ICR
+IJP EXEC_WRAPPER
+
+; === Main Entry ===
+>TRACER_MAIN STRAL TRACED_PC
+; Explicitly initialize traced state (in case DATA values weren't loaded correctly)
+ENTALK 0
+STRAL TRACED_AL
+STRAL TRACED_AU
+STRAL TRACED_B
+STRAL TRACED_SR
+STRAL TRACED_ICR
+SIL 0
+ENTICR 0
+ENTALK &O13
+RJP EXFAL
+
+; === Main Trace Loop ===
+; Build ENTSR from PC bank for all memory accesses in traced program's space
+; Even when TRACED_SR=0, the traced program's local_addr uses PC bank
+>TRACE_LOOP ENTAL TRACED_PC
+RSHA 12
+SLCL MASK_LOWER_3
+ADDALK &O10                   ; Set active bit
+ADDAL CONST_ENTSR
+STRAL FETCH_ENTSR_EXEC        ; Use PC bank for instruction fetch
+STRAL IJP_ENTSR               ; Use PC bank for IJP pointer read
+STRAL IRJP_ENTSR              ; Use PC bank for IRJP pointer read
+STRAL RJP_ENTSR               ; Use PC bank for RJP return addr write
+STRAL IO_FETCH_ENTSR          ; I/O params are in program space
+STRAL UP_WB_ENTSR             ; For y=up-only writeback
+ENTAL TRACED_PC
+SLCL MASK_12BIT
+STRAL FETCH_OFFSET
+STRB TRACER_SAVE_AU
+ENTB FETCH_OFFSET
+>FETCH_ENTSR_EXEC DATA 0
+ENTALB 0                      ; AL = instruction from memory
+ENTSR 0
+ENTB TRACER_SAVE_AU           ; Restore B (doesn't touch AL)
+STRAL ORIG_INSN
+STRAL EXEC_INSN
+
+; Print state BEFORE execution: PC INSN AU AL B SR ICR
+RJP CRLF
+ENTAL TRACED_PC
+RJP OUTOCT_SP
+ENTAL ORIG_INSN
+RJP OUTOCT_SP
+ENTAL TRACED_AU
+RJP OUTOCT_SP
+ENTAL TRACED_AL
+RJP OUTOCT_SP
+ENTAL TRACED_B
+RJP OUTOCT_SP
+ENTAL TRACED_SR
+RJP OUTOCT_SP
+ENTAL TRACED_ICR
+RJP OUTOCT
+RJP CRLF
+
+; Pre-compute values for handlers
+ENTAL ORIG_INSN
+SLCL MASK_FMT2
+STRAL TRACER_SAVE_AU        ; FMT2 masked value (upper 12 bits)
+SLCL MASK_OPCODE            ; Further mask FMT2 to get opcode
+STRAL TRACER_SAVE_AL        ; Opcode masked value (upper 6 bits)
+ENTAL ORIG_INSN
+SLCL MASK_12BIT
+STRAL ORIG_TARGET           ; Y-field (lower 12 bits) - used by jump handlers
+
+; Extract 6-bit primary opcode and dispatch via jump table
+ENTAL ORIG_INSN
+RSHAL 12                    ; bits 17-12 -> bits 5-0
+SLCL MASK_K                 ; mask to 6 bits
+ADDALK PRIMARY_OPCODE_TABLE ; add table base address
+ADDAL CONST_JP              ; construct JP instruction
+STRAL DISPATCH_JP           ; self-modifying dispatch
+>DISPATCH_JP DATA 0         ; JP PRIMARY_OPCODE_TABLE+opcode
+
+; 64-entry jump table indexed by 6-bit primary opcode (octal 00-77)
+>PRIMARY_OPCODE_TABLE JP ERROR_HALT            ; 00 illegal
+JP ERROR_HALT               ; 01 illegal
+JP ERROR_HALT               ; 02 CMAL
+JP ERROR_HALT               ; 03 CMALB
+JP EXEC_NON_JUMP            ; 04 SLSU
+JP EXEC_NON_JUMP            ; 05 SLSUB
+JP ERROR_HALT               ; 06 CMSK
+JP ERROR_HALT               ; 07 CMSKB
+JP EXEC_NON_JUMP            ; 10 ENTAU
+JP EXEC_NON_JUMP            ; 11 ENTAUB
+JP EXEC_NON_JUMP            ; 12 ENTAL
+JP EXEC_NON_JUMP            ; 13 ENTALB
+JP EXEC_NON_JUMP            ; 14 ADDAL
+JP EXEC_NON_JUMP            ; 15 ADDALB
+JP EXEC_NON_JUMP            ; 16 SUBAL
+JP EXEC_NON_JUMP            ; 17 SUBALB
+JP EXEC_NON_JUMP            ; 20 ADDA
+JP EXEC_NON_JUMP            ; 21 ADDAB
+JP EXEC_NON_JUMP            ; 22 SUBA
+JP EXEC_NON_JUMP            ; 23 SUBAB
+JP EXEC_NON_JUMP            ; 24 MULA
+JP EXEC_NON_JUMP            ; 25 MULAB
+JP EXEC_NON_JUMP            ; 26 DIVA
+JP EXEC_NON_JUMP            ; 27 DIVAB
+JP IS_JUMP_IRJP             ; 30 IRJP
+JP IS_JUMP_IRJPB            ; 31 IRJPB
+JP EXEC_NON_JUMP            ; 32 ENTB
+JP EXEC_NON_JUMP            ; 33 ENTBB
+JP IS_JUMP_CONDITIONAL      ; 34 JP
+JP IS_JUMP_JPB              ; 35 JPB
+JP EXEC_NON_JUMP            ; 36 ENTBK
+JP EXEC_NON_JUMP            ; 37 ENTBKB
+JP EXEC_NON_JUMP            ; 40 CL
+JP EXEC_NON_JUMP            ; 41 CLB
+JP EXEC_NON_JUMP            ; 42 STRAL
+JP EXEC_NON_JUMP            ; 43 STRALB
+JP EXEC_NON_JUMP            ; 44 STRAU
+JP EXEC_NON_JUMP            ; 45 STRAUB
+JP EXEC_NON_JUMP            ; 46 STRAU (dup)
+JP EXEC_NON_JUMP            ; 47 STRAUB (dup)
+JP IS_FORMAT_II             ; 50 Format II
+JP IS_UP_ONLY_RO            ; 51 SLSET
+JP IS_UP_ONLY_RO            ; 52 SLCL
+JP IS_UP_ONLY_RO            ; 53 SLCP
+JP ERROR_HALT               ; 54 IJPEI
+JP IS_JUMP_IJP              ; 55 IJP
+JP IS_UP_ONLY_RO            ; 56 BSK
+JP IS_UP_ONLY_RW            ; 57 ISK
+JP IS_JUMP_CONDITIONAL      ; 60 JPALZ
+JP IS_JUMP_CONDITIONAL      ; 61 JPALNZ
+JP IS_JUMP_CONDITIONAL      ; 62 JPAUZ
+JP IS_JUMP_CONDITIONAL      ; 63 JPAUNZ
+JP IS_JUMP_CONDITIONAL      ; 64 JPANZ
+JP IS_JUMP_CONDITIONAL      ; 65 JPANNZ
+JP IS_JUMP_CONDITIONAL      ; 66 JPOVF
+JP IS_JUMP_CONDITIONAL      ; 67 JPNOVF
+JP EXEC_NON_JUMP            ; 70 ENTALK
+JP EXEC_NON_JUMP            ; 71 ADDALK
+JP IS_UP_ONLY_RW            ; 72 STRICR
+JP IS_JUMP_CONDITIONAL      ; 73 BJP
+JP IS_UP_ONLY_RW            ; 74 STRADR
+JP IS_UP_ONLY_RW            ; 75 STRSR
+JP IS_JUMP_RJP              ; 76 RJP
+JP ERROR_HALT               ; 77 illegal
+
+; === Format II secondary dispatch ===
+>IS_FORMAT_II ENTAL TRACER_SAVE_AU
+SLCP CONST_RTC
+JPALZ ERROR_HALT
+ENTAL TRACER_SAVE_AU
+SLCP CONST_WTFI
+JPALZ ERROR_HALT
+ENTAL TRACER_SAVE_AU
+SLCP CONST_RIL
+SLCL MASK_IGNORE_BIT6       ; Catches both 50:30 and 50:31
+JPALZ ERROR_HALT
+ENTAL TRACER_SAVE_AU
+SLCP CONST_EXL
+SLCL MASK_IGNORE_BIT6       ; Catches both 50:32 and 50:33
+JPALZ ERROR_HALT
+ENTAL TRACER_SAVE_AU
+SLCP CONST_ENTSR
+JPALZ IS_ENTSR
+ENTAL TRACER_SAVE_AU
+SLCP CONST_ENTICR
+JPALZ IS_ENTICR
+ENTAL TRACER_SAVE_AU
+SLCP CONST_IN
+JPALZ IS_IO_INSN
+ENTAL TRACER_SAVE_AU
+SLCP CONST_OUT
+JPALZ IS_IO_INSN
+ENTAL TRACER_SAVE_AU
+SLCP CONST_EXF
+JPALZ IS_IO_INSN
+JP EXEC_NON_JUMP
+
+; === Jump Handlers ===
+; TRACER_SAVE_AL = opcode, ORIG_TARGET = y-field (precomputed)
+>IS_JUMP_CONDITIONAL ENTALK JUMP_TAKEN
+SLCL MASK_12BIT
+ADDAL TRACER_SAVE_AL         ; Reuse pre-computed opcode
+STRAL EXEC_INSN_JUMP
+JP EXEC_JUMP
+
+>IS_JUMP_JPB ENTAL ORIG_TARGET
+ADDAL TRACED_B
+STRAL ORIG_TARGET             ; y+B
+JP EXEC_JP_TAKEN
+
+>IS_JUMP_IJP ENTAL ORIG_TARGET
+STRAL FETCH_OFFSET
+ENTB FETCH_OFFSET
+>IJP_ENTSR DATA 0
+ENTALB 0                      ; AL = pointer from memory
+ENTSR 0
+STRAL ORIG_TARGET             ; Target = pointer
+JP EXEC_JP_TAKEN_FULL
+
+>IS_JUMP_RJP ENTAL ORIG_TARGET
+STRAL FETCH_OFFSET
+ADDALK 1
+STRAL ORIG_TARGET             ; y+1 = jump target
+ENTAL TRACED_PC
+ADDALK 1                      ; AL = PC+1 = return address
+ENTB FETCH_OFFSET             ; B = y
+>RJP_ENTSR DATA 0
+STRALB 0                      ; Store return address at y
+ENTSR 0
+JP EXEC_JP_TAKEN
+
+>IS_JUMP_IRJPB ENTAL ORIG_TARGET
+ADDAL TRACED_B
+JP IRJP_COMMON
+
+>IS_JUMP_IRJP ENTAL ORIG_TARGET
+>IRJP_COMMON STRAL FETCH_OFFSET
+ENTB FETCH_OFFSET
+>IRJP_ENTSR DATA 0
+ENTALB 0                      ; AL = pointer from memory
+ENTSR 0
+STRAL FETCH_OFFSET            ; Reuse FETCH_OFFSET for pointer
+ADDALK 1
+STRAL ORIG_TARGET             ; Target = pointer + 1
+ENTAL TRACED_PC
+ADDALK 1                      ; AL = PC+1 = return address
+ENTB FETCH_OFFSET             ; B = pointer
+STRALB 0                      ; Store return address at pointer
+JP EXEC_JP_TAKEN_FULL
+
+; === Error Handler (prints instruction, halts) ===
+>ERROR_HALT ENTAL ORIG_INSN
+RJP OUTOCT
+RJP CRLF
+JP ERROR_HALT
+
+; === I/O Instruction Handler ===
+; I/O instructions (IN, OUT, EXF) are 3 words: insn + 2 DATA
+>IO_SCRATCH_0 DATA 0
+>IO_SCRATCH_1 DATA 0
+>IO_SCRATCH_2 DATA 0
+JP IO_DONE  ; Return after I/O execution
+
+; Fetch subroutine: Input AL=12-bit addr, Output AL=value, clobbers B
+>IO_FETCH DATA 0
+STRAL FETCH_OFFSET
+ENTB FETCH_OFFSET
+>IO_FETCH_ENTSR DATA 0
+ENTALB 0
+ENTSR 0
+IJP IO_FETCH
+
+>IS_IO_INSN ENTAL ORIG_INSN
+STRAL IO_SCRATCH_0
+
+; Fetch word at PC+1
+ENTAL TRACED_PC
+ADDALK 1
+SLCL MASK_12BIT
+RJP IO_FETCH
+STRAL IO_SCRATCH_1
+
+; Fetch word at PC+2
+ENTAL TRACED_PC
+ADDALK 2
+SLCL MASK_12BIT
+RJP IO_FETCH
+STRAL IO_SCRATCH_2
+
+; Build ENTICR TRACED_ICR dynamically for I/O execution
+ENTAL TRACED_ICR
+SLCL MASK_LOWER_3
+ADDAL CONST_ENTICR
+STRAL IO_EXEC_ENTICR
+; Restore traced state and execute I/O sequence
+ENTAL TRACED_AL
+ENTAU TRACED_AU
+>IO_EXEC_ENTICR DATA 0        ; ENTICR TRACED_ICR (dynamic)
+ENTB TRACED_B
+JP IO_SCRATCH_0
+
+>IO_DONE STRAL TRACED_AL
+STRAU TRACED_AU
+STRB TRACED_B
+ENTSR 0
+
+; Increment PC by 3
+ENTAL TRACED_PC
+ADDALK 3
+STRAL TRACED_PC
+JP AFTER_EXECUTE
+
+; === ENTSR Handler ===
+>IS_ENTSR ENTAL ORIG_INSN
+SLCL MASK_K
+STRAL TRACED_SR
+JP INC_PC_1
+
+; === ENTICR Handler ===
+; After ENTICR k, ICR = k and B is the register selected by ICR
+>IS_ENTICR ENTAL ORIG_INSN
+SLCL MASK_LOWER_3
+STRAL TRACED_ICR        ; TRACED_ICR = k
+; Read actual B value (now selected by new ICR)
+ADDAL CONST_ENTICR
+STRAL ENTICR_READ_B
+>ENTICR_READ_B DATA 0   ; ENTICR k (dynamic)
+STRB TRACED_B           ; Save B (now selected by new ICR)
+ENTICR 0                ; Restore tracer's ICR
+; Fall through to INC_PC_1
+
+; Common: increment PC by 1 and loop
+>INC_PC_1 ENTAL TRACED_PC
+ADDALK 1
+STRAL TRACED_PC
+JP AFTER_EXECUTE
+
+; === Execute Jump ===
+; Build ENTICR TRACED_ICR dynamically
+>EXEC_JUMP ENTAL TRACED_ICR
+SLCL MASK_LOWER_3
+ADDAL CONST_ENTICR
+STRAL EXEC_JUMP_ENTICR
+; Restore traced state and execute
+ENTAL TRACED_AL
+ENTAU TRACED_AU
+>EXEC_JUMP_ENTICR DATA 0      ; ENTICR TRACED_ICR (dynamic)
+ENTB TRACED_B
+RJP EXEC_JUMP_WRAPPER
+; EXEC_JUMP_WRAPPER never returns - goes to JUMP_TAKEN/JUMP_NOT_TAKEN -> AFTER_EXECUTE
+
+; === UP-only read-only handler (BSK, SLSET, SLCL, SLCP) ===
+; These instructions use y=up addressing only. The tracer pre-fetches the operand
+; from the traced bank into UP_SCRATCH, rewrites the y-field to point to scratch,
+; then executes normally. No writeback needed since these don't modify (y).
+>IS_UP_ONLY_RO ENTAL ORIG_TARGET     ; y-field (12-bit offset)
+RJP IO_FETCH                          ; AL = (y) from traced bank, clobbers B
+STRAL UP_SCRATCH                      ; Store in scratch
+ENTALK UP_SCRATCH                     ; AL = address of UP_SCRATCH
+STRADR EXEC_INSN                      ; Rewrite y-field in place (keeps opcode)
+JP EXEC_NON_JUMP                      ; Execute normally
+
+; === UP-only read-write handler (ISK, STRICR, STRSR) ===
+; Same as above, but these modify (y), so we writeback UP_SCRATCH afterward.
+>IS_UP_ONLY_RW ENTAL ORIG_TARGET     ; y-field (12-bit offset)
+RJP IO_FETCH                          ; AL = (y) from traced bank, clobbers B
+STRAL UP_SCRATCH                      ; Store in scratch
+ENTALK UP_SCRATCH                     ; AL = address of UP_SCRATCH
+STRADR EXEC_INSN                      ; Rewrite y-field in place (keeps opcode)
+; Execute via EXEC_WRAPPER (handles skip detection, register save/restore)
+RJP EXEC_WRAPPER
+; Writeback: store UP_SCRATCH to original address in traced bank
+ENTAL ORIG_TARGET                     ; y-field offset (tracer bank, SR cleared)
+STRAL FETCH_OFFSET
+ENTB FETCH_OFFSET                     ; B = y-field offset
+ENTAL UP_SCRATCH                      ; Load modified value (before SR is set)
+>UP_WB_ENTSR DATA 0                   ; ENTSR traced bank (dynamic)
+STRALB 0                              ; Write to traced_bank[B]
+ENTSR 0
+; Update PC
+ENTAL TRACED_PC
+ADDAL PC_DELTA
+STRAL TRACED_PC
+JP AFTER_EXECUTE
+
+; === Execute Non-Jump ===
+>EXEC_NON_JUMP RJP EXEC_WRAPPER
+ENTAL TRACED_PC
+ADDAL PC_DELTA
+STRAL TRACED_PC
+
+; === Loop Back ===
+>AFTER_EXECUTE JP TRACE_LOOP
+

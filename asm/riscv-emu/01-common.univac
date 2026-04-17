@@ -1,0 +1,69 @@
+; All 32 RISC-V registers, initialized to 0
+EVEN
+```
+let () =
+  List.range 0 32
+  |> List.iter ~f:(fun i ->
+    printf ">REG_%d_LO DATA 0\n" i;
+    printf ">REG_%d_HI DATA 0\n" i)
+```
+
+; Current offset into RISCV_PROGRAM. (Which instruction to fetch)
+>PC_OFFSET DATA 0
+
+; Scratch space used by RISC-V instructions that take an immediate arg
+EVEN
+>IMM_LOWER DATA 0
+>IMM_UPPER DATA 0
+
+; General scratch vars
+EVEN
+>TMP_LO DATA 0
+>TMP_HI DATA 0
+
+; Initialized each time by instruction fetch + decode
+; Recall our RISC-V instruction encoding:
+;   INSN_WORD1: [dest:5][src1:5][opcode:8]
+;   INSN_WORD2: [src2/imm:18]
+>INSN_WORD2 DATA 0         ; Second word of RISC-V instruction
+>INSN_SRC1_OFFSET DATA 0   ; SRC1 * 2, register to read from, from word1
+>INSN_DEST_OFFSET DATA 0   ; DEST * 2, register to write to, from word1
+
+; It's important that CONST_0 follows CONST_1 for 36 bit ops against CONST_1
+EVEN
+>CONST_1 DATA 1
+>CONST_0 DATA 0
+>CONST_MASK_8BIT DATA 255     ; 0xFF
+>CONST_MASK_14BIT DATA 16383  ; 0x3FFF = mask to 14 bits
+>CONST_MASK_18BIT DATA 262143 ; 0x3FFFF = all 18 bits set
+>CONST_SIGN_BIT_31 DATA 8192  ; 0x2000 = bit 31
+
+; Some common routines:
+
+; We maintain the invariant that the upper 4 bits of all REG_* values
+; representing RISC-V registers are 0
+
+; Store A to register pointed by INSN_DEST_OFFSET, masking AU to 14 bits
+>STORE_RESULT STRAU TMP_HI
+ENTAU INSN_DEST_OFFSET
+JPAUNZ STORE_RESULT_DO ; Don't write to 0 register
+JP NEXT_INSTRUCTION
+
+>STORE_RESULT_DO ENTB INSN_DEST_OFFSET
+STRALB REG_0_LO
+ENTAL TMP_HI
+SLCL CONST_MASK_14BIT
+STRALB REG_0_HI
+JP NEXT_INSTRUCTION
+
+; Store A to register pointed by INSN_DEST_OFFSET, don't mask AU
+; Always writes (even to x0), then clears x0 to maintain invariant.
+>STORE_RESULT_PREMASKED ENTB INSN_DEST_OFFSET
+STRALB REG_0_LO
+STRAUB REG_0_HI
+CL REG_0_LO
+CL REG_0_HI
+JP NEXT_INSTRUCTION
+
+; STORE_RESULT_LOWER is in 02-decode.univac (falls through to NEXT_INSTRUCTION)
+
