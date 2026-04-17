@@ -1,0 +1,73 @@
+{
+  "$schema": "https://raw.githubusercontent.com/martinring/tmlanguage/master/tmlanguage.json",
+  "name": "UNIVAC-1219 Assembly",
+  "scopeName": "source.univac1219",
+  "patterns": [
+    { "include": "#doc-block" },
+    { "include": "#comment" },
+    { "include": "#label-definition" },
+    { "include": "#directive-as-aw" },
+    { "include": "#directive" },
+    { "include": "#instruction" },
+    { "include": "#operand-lok" },
+    { "include": "#octal-number" },
+    { "include": "#decimal-number" },
+    { "include": "#symbol" }
+  ],
+  "repository": {
+    "doc-block": {
+      "name": "comment.block.documentation.univac1219",
+      "begin": "```",
+      "end": "```",
+      "patterns": [
+        {
+          "name": "comment.block.documentation.content.univac1219",
+          "match": "."
+        }
+      ]
+    },
+    "comment": {
+      "name": "comment.line.semicolon.univac1219",
+      "match": ";.*$"
+    },
+    "label-definition": {
+      "match": "^(>)([A-Za-z_][A-Za-z0-9_]*)",
+      "captures": {
+        "1": { "name": "punctuation.definition.label.univac1219" },
+        "2": { "name": "entity.name.function.label.univac1219" }
+      }
+    },
+    "directive-as-aw": {
+      "comment": "AS/AW directives with string content",
+      "match": "\\b(AS|AW)\\b[ \\t]+(.*?)(?=;|$)",
+      "captures": {
+        "1": { "name": "keyword.control.directive.univac1219" },
+        "2": { "name": "string.unquoted.univac1219" }
+      }
+    },
+    "directive": {
+      "name": "keyword.control.directive.univac1219",
+      "match": "\\b(?i:ORG|SADD|DATA|AS|AW|EVEN|END)\\b"
+    },
+    "instruction": {
+      "name": "keyword.other.instruction.univac1219",
+      "match": "\\b(?i:CMAL|CMALB|SLSU|SLSUB|CMSK|CMSKB|ENTAU|ENTAUB|ENTAL|ENTALB|ADDAL|ADDALB|SUBAL|SUBALB|ADDA|ADDAB|SUBA|SUBAB|MULAL|MULALB|DIVA|DIVAB|IRJP|IRJPB|ENTB|ENTBB|JP|JPB|ENTBK|ENTBKB|CL|CLB|STRB|STRBB|STRAL|STRALB|STRAU|STRAUB|SIN|SOUT|SEXF|IN|OUT|EXF|RTC|INSTP|OUTSTP|EXFSTP|SRSM|SKPIIN|SKPOIN|SKPEIN|WTFI|OUTOV|EXFOV|RIL|RXL|SIL|SXL|RSHAU|RSHAL|RSHA|SF|LSHAU|LSHAL|LSHA|SKP|SKPNBO|SKPOV|SKPNOV|SKPODD|SKPEVN|STOP|SKPNR|RND|CPAL|CPAU|CPA|ENTICR|ENTSR|SLSET|SLCL|SLCP|IJPEI|IJP|BSK|ISK|JPAUZ|JPALZ|JPAUNZ|JPALNZ|JPAUP|JPALP|JPAUNG|JPALNG|ENTALK|ADDALK|STRICR|BJP|STRADR|STRSR|RJP|SKPFIN)\\b"
+    },
+    "operand-lok": {
+      "name": "support.constant.lok.univac1219",
+      "match": "\\bLOK\\b"
+    },
+    "octal-number": {
+      "name": "constant.numeric.octal.univac1219",
+      "match": "&O?[0-7]+"
+    },
+    "decimal-number": {
+      "name": "constant.numeric.decimal.univac1219",
+      "match": "\\b-?[0-9]+\\b"
+    },
+    "symbol": {
+      "name": "variable.other.symbol.univac1219",
+      "match": "\\b[A-Za-z_][A-Za-z0-9_]*\\b"
+    }
+  }
+}

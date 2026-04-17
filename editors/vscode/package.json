@@ -1,0 +1,49 @@
+{
+  "name": "univac-1219-asm",
+  "displayName": "UNIVAC-1219 Assembly",
+  "description": "Syntax highlighting, auto-completion, hover docs, and go-to-definition for UNIVAC-1219 assembly language",
+  "version": "1.0.0",
+  "publisher": "univac1219",
+  "engines": {
+    "vscode": "^1.109.0"
+  },
+  "categories": [
+    "Programming Languages"
+  ],
+  "activationEvents": [
+    "onLanguage:univac1219"
+  ],
+  "main": "./out/extension.js",
+  "contributes": {
+    "languages": [
+      {
+        "id": "univac1219",
+        "aliases": [
+          "UNIVAC-1219 Assembly",
+          "univac1219"
+        ],
+        "extensions": [
+          ".univac"
+        ],
+        "configuration": "./language-configuration.json"
+      }
+    ],
+    "grammars": [
+      {
+        "language": "univac1219",
+        "scopeName": "source.univac1219",
+        "path": "./syntaxes/univac1219.tmLanguage.json"
+      }
+    ]
+  },
+  "scripts": {
+    "vscode:prepublish": "npm run compile",
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./"
+  },
+  "devDependencies": {
+    "@types/vscode": "^1.109.0",
+    "@types/node": "^25.3.0",
+    "typescript": "^5.9.3"
+  }
+}
