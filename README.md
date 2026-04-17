@@ -1,6 +1,6 @@
 # RISC-V on UNIVAC-1219 [![CI](https://github.com/nathanfarlow/univac-1219-riscv/actions/workflows/ci.yml/badge.svg)](https://github.com/nathanfarlow/univac-1219-riscv/actions/workflows/ci.yml)
 
-Run modern 32-bit RISC-V programs on the UNIVAC 1219, a 1960s 18-bit computer.
+Run modern 32-bit RISC-V programs on the UNIVAC 1219, a 1960s 18-bit computer. [Blog post](https://farlow.dev/2026/04/17/running-a-minecraft-server-and-more-on-a-1960s-univac-computer.html)
 
 ## Quick Start (Linux/Windows/macOS)
 
