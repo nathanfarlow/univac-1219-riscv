@@ -1,0 +1,45 @@
+; === Utility subroutines ===
+
+; OUTAL: output char from AL on channel 0 (no EXF needed)
+>OUTWD DATA 0
+>OUTAL DATA 0
+STRAL OUTWD
+OUT 0
+DATA OUTWD
+DATA OUTWD
+SKPOIN 0
+JP LOK-1
+IJP OUTAL
+
+; CRLF
+>CRLF DATA 0
+ENTALK &O15
+RJP OUTAL
+ENTALK &O12
+RJP OUTAL
+IJP CRLF
+
+; OUTOCT: print AL as 6-digit octal
+>OCT_SAV DATA 0
+>OCT_SAU DATA 0
+>OCT_CNT DATA 0
+>OUTOCT DATA 0
+STRAL OCT_SAV
+STRAU OCT_SAU
+LSHA 18
+ENTALK 5
+STRAL OCT_CNT
+>OCT_LP ENTALK 0
+LSHA 3
+ADDALK &O60
+RJP OUTAL
+ISK OCT_CNT
+JP OCT_LP
+ENTAL OCT_SAV
+ENTAU OCT_SAU
+IJP OUTOCT
+
+```
+let print_string s =
+  String.iter s ~f:(fun c -> printf "ENTALK %d\nRJP OUTAL\n" (Char.to_int c))
+```

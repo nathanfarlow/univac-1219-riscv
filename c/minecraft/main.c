@@ -1,7 +1,7 @@
 /*
  * Happy-path PPP/IP/TCP + Minecraft server for UNIVAC
  *
- * Runs on the UNIVAC emulator, communicates via serial channel 7
+ * Runs on the UNIVAC emulator, communicates via serial channel 10.
  * Minecraft client connects to 10.0.0.2:25565
  */
 #include <stdint.h>
@@ -65,25 +65,40 @@ void ppp_send(uint16_t proto, uint8_t *payload, int len) {
 }
 
 int ppp_recv(uint16_t *proto, uint8_t *payload) {
+  static int have_flag = 0;
   int c;
-  while ((c = raw_getc()) >= 0 && c != 0x7E)
-    ;
-  if (c < 0)
-    return -1;
-
   uint8_t buf[1500];
-  int len = 0, esc = 0;
-  while ((c = raw_getc()) >= 0 && c != 0x7E) {
-    if (esc) {
-      buf[len++] = c ^ 0x20;
-      esc = 0;
-    } else if (c == 0x7D)
-      esc = 1;
-    else if (len < (int)sizeof(buf))
-      buf[len++] = c;
+  int len, esc;
+
+  for (;;) {
+    if (!have_flag) {
+      while ((c = raw_getc()) >= 0 && c != 0x7E)
+        ;
+      if (c < 0)
+        return -1;
+    }
+    have_flag = 0;
+
+    len = 0;
+    esc = 0;
+    while ((c = raw_getc()) >= 0 && c != 0x7E) {
+      if (esc) {
+        buf[len++] = c ^ 0x20;
+        esc = 0;
+      } else if (c == 0x7D)
+        esc = 1;
+      else if (len < (int)sizeof(buf))
+        buf[len++] = c;
+    }
+
+    if (c < 0)
+      return -1;
+    have_flag = 1; /* consumed 0x7E is opening flag of next frame */
+
+    if (len >= 6)
+      break; /* got a real frame */
+    /* short/empty frame (inter-frame fill) — retry */
   }
-  if (len < 6)
-    return 0; /* empty/short frame, continue */
 
   *proto = (buf[2] << 8) | buf[3];
   memcpy(payload, buf + 4, len - 6);
@@ -224,10 +239,11 @@ int mc_packet(uint8_t *out, int packet_id, uint8_t *data, int dlen) {
 
 /* === Registry Data (minimal for 1.21.8) === */
 
-static const uint8_t known_packs[] = {0x18, 0x0e, 0x01, 0x09, 0x6d, 0x69, 0x6e,
-                                      0x65, 0x63, 0x72, 0x61, 0x66, 0x74, 0x04,
-                                      0x63, 0x6f, 0x72, 0x65, 0x06, 0x31, 0x2e,
-                                      0x32, 0x31, 0x2e, 0x38};
+static const uint8_t known_packs[] = {0x18, 0x0e, 0x01, 0x09, 0x6d, 0x69,
+                                      0x6e, 0x65, 0x63, 0x72, 0x61, 0x66,
+                                      0x74, 0x04, 0x63, 0x6f, 0x72, 0x65,
+                                      0x06, 0x31, 0x2e, 0x32, 0x31, 0x2e,
+                                      0x38};
 
 static const uint8_t registries_bin[] = {
     0x13, 0x07, 0x0b, 0x63, 0x61, 0x74, 0x5f, 0x76, 0x61, 0x72, 0x69, 0x61,
@@ -337,6 +353,7 @@ int main() {
   static struct {
     uint16_t port;
     uint32_t seq;
+    uint32_t ack_seq; /* last ACKed client seq (tseq + dlen) */
     uint8_t mc_state;
   } conns[MAX_CONNS];
   static int num_conns = 0;
@@ -384,7 +401,7 @@ int main() {
       }
     }
     /* IP */
-    else if (proto == 0x0021 && len > 40) {
+    else if (proto == 0x0021 && len >= 40) {
       int ihl = (buf[0] & 0xF) * 4;
       uint32_t src_ip;
       memcpy(&src_ip, buf + 12, 4);
@@ -394,7 +411,8 @@ int main() {
       uint8_t *tcp = buf + ihl;
       uint16_t sp = (tcp[0] << 8) | tcp[1];
       uint16_t dp = (tcp[2] << 8) | tcp[3];
-      uint32_t tseq = (tcp[4] << 24) | (tcp[5] << 16) | (tcp[6] << 8) | tcp[7];
+      uint32_t tseq =
+          (tcp[4] << 24) | (tcp[5] << 16) | (tcp[6] << 8) | tcp[7];
       uint8_t flags = tcp[13];
       int doff = (tcp[12] >> 4) * 4;
       int dlen = len - ihl - doff;
@@ -409,25 +427,40 @@ int main() {
       }
 
       if (flags & 0x02) { /* SYN -> SYN-ACK */
-        if (ci < 0 && num_conns < MAX_CONNS) {
-          ci = num_conns++;
-          conns[ci].port = sp;
-        }
         if (ci >= 0) {
-          conns[ci].seq = 1001;
-          conns[ci].mc_state = STATE_HANDSHAKE;
+          /* Duplicate SYN for existing connection — skip */
+        } else {
+          if (num_conns < MAX_CONNS) {
+            ci = num_conns++;
+            conns[ci].port = sp;
+          }
+          if (ci >= 0) {
+            conns[ci].seq = 1001;
+            conns[ci].ack_seq = tseq + 1;
+            conns[ci].mc_state = STATE_HANDSHAKE;
+          }
+          mc_buflen = 0;
+          tcp_packet(pkt, &plen, dp, sp, 1000, tseq + 1, 0x12, NULL, 0, my_ip,
+                     src_ip);
+          ip_packet(buf, &len, my_ip, src_ip, pkt, plen);
+          ppp_send(0x0021, buf, len);
         }
-        mc_buflen = 0;
-        tcp_packet(pkt, &plen, dp, sp, 1000, tseq + 1, 0x12, NULL, 0, my_ip,
-                   src_ip);
-        ip_packet(buf, &len, my_ip, src_ip, pkt, plen);
-        ppp_send(0x0021, buf, len);
       } else if (dlen > 0 && dp == MC_PORT && ci >= 0) { /* Minecraft data */
+        /* Skip retransmitted data we already processed */
+        if (tseq < conns[ci].ack_seq) {
+          /* Re-ACK so client knows we have it */
+          tcp_packet(pkt, &plen, dp, sp, conns[ci].seq, conns[ci].ack_seq,
+                     0x10, NULL, 0, my_ip, src_ip);
+          ip_packet(buf, &len, my_ip, src_ip, pkt, plen);
+          ppp_send(0x0021, buf, len);
+          continue;
+        }
         uint8_t *data = tcp + doff;
         uint32_t seq = conns[ci].seq;
         uint8_t mc_state = conns[ci].mc_state;
 
-        /* ACK the data first */
+        /* ACK the data */
+        conns[ci].ack_seq = tseq + dlen;
         tcp_packet(pkt, &plen, dp, sp, seq, tseq + dlen, 0x10, NULL, 0, my_ip,
                    src_ip);
         ip_packet(buf, &len, my_ip, src_ip, pkt, plen);
@@ -616,7 +649,7 @@ int main() {
 
             /* Game Event 13 - Start waiting for chunks (0x22) */
             uint8_t evt[8];
-            evt[0] = 13;           /* Event ID */
+            evt[0] = 13; /* Event ID */
             memset(evt + 1, 0, 4); /* Value (float 0) */
             rlen += mc_packet(resp + rlen, 0x22, evt, 5);
 

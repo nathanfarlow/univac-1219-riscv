@@ -1,0 +1,180 @@
+; =============================================================
+; CDM DUPLEX I/O PROOF - CHANNEL 0
+; =============================================================
+; To use channel 7, change:
+;   IN/OUT/EXF/SKPOIN/SKPFIN 0 -> 7
+;   &O60/&O61 -> &O76/&O77   (input TBCW/CBCW)
+;   &O20/&O21 -> &O36/&O37   (EF/CDM re-arm)
+;
+; Control memory is in page 0 (addrs 20-77 octal).
+; Program runs at page 50000, so we use ENTSR 8 / ENTSR 0
+; to temporarily switch addressing to page 0.
+;
+; Buffer addresses in BCWs must be full 18-bit (PAGE_BASE | offset)
+; so hardware writes to the same page the program reads from.
+
+; --- Data ---
+>CDM_BIT DATA &O400000
+>PAGE_BASE DATA &O50000
+>ADDR_MASK DATA &O177777
+>EFBUF DATA 25
+>READ_PTR DATA 0
+>BUF_EP1 DATA 0
+>GOT DATA 0
+>CNT DATA 0
+
+; 5-word circular receive buffer
+>BUF DATA 0
+DATA 0
+DATA 0
+DATA 0
+>BUF_END DATA 0
+
+; --- PRINT_REGS: show TBCW, CBCW, read ptr ---
+>PRINT_REGS DATA 0
+```
+print_string "  T="
+```
+ENTSR 8
+ENTAL &O60
+ENTSR 0
+RJP OUTOCT
+```
+print_string " C="
+```
+ENTSR 8
+ENTAL &O61
+ENTSR 0
+RJP OUTOCT
+```
+print_string " R="
+```
+ENTAL READ_PTR
+RJP OUTOCT
+RJP CRLF
+IJP PRINT_REGS
+
+; =============================================================
+>MAIN ENTALK 0
+
+; 1. EXF: set input mode
+ENTALK 25
+STRAL EFBUF
+EXF 0
+DATA EFBUF
+DATA EFBUF
+SKPFIN 0
+JP LOK-1
+
+; 2. CDM re-arm BCWs -> EF slots (page 0 addrs 20/21)
+ENTALK BUF_END
+SLSET PAGE_BASE
+SLSET CDM_BIT
+ENTSR 8
+STRAL &O20
+ENTSR 0
+ENTALK BUF
+SLSET PAGE_BASE
+ENTSR 8
+STRAL &O21
+ENTSR 0
+
+; 3. Start continuous input (self-modify DATA words)
+ENTALK BUF_END
+SLSET PAGE_BASE
+SLSET CDM_BIT
+STRAL IN_T
+ENTALK BUF
+SLSET PAGE_BASE
+STRAL IN_C
+IN 0
+>IN_T DATA 0
+>IN_C DATA 0
+
+; 4. Init state
+ENTALK BUF
+SLSET PAGE_BASE
+STRAL READ_PTR
+ENTALK BUF_END
+SLSET PAGE_BASE
+ADDALK 1
+STRAL BUF_EP1
+
+; Banner
+```
+print_string "CDM DUPLEX CH0 BUF="
+```
+ENTALK BUF
+SLSET PAGE_BASE
+RJP OUTOCT
+```
+print_string " END="
+```
+ENTALK BUF_END
+SLSET PAGE_BASE
+RJP OUTOCT
+RJP CRLF
+RJP PRINT_REGS
+
+; --- Loop: 5 chars ---
+ENTALK 4
+STRAL CNT
+
+```
+let () = printf ">LOOP "
+let () = print_string ">"
+```
+
+; Busy-poll: compare read ptr vs hw write ptr (CBCW at 61)
+>POLL ENTSR 8
+ENTAL &O61
+ENTSR 0
+SLCL ADDR_MASK
+CMAL READ_PTR
+JPALZ POLL
+
+; Read byte from buffer[read_ptr] (ENTSR 8 zeros the page base)
+ENTB READ_PTR
+ENTSR 8
+ENTALB 0
+ENTSR 0
+STRAL GOT
+
+; Advance read ptr, wrap if past end
+ENTAL READ_PTR
+ADDALK 1
+STRAL READ_PTR
+CMAL BUF_EP1
+JPALNZ NO_WRAP
+ENTALK BUF
+SLSET PAGE_BASE
+STRAL READ_PTR
+>NO_WRAP ENTALK 0
+
+; Print result
+```
+print_string " got '"
+```
+ENTAL GOT
+RJP OUTAL
+```
+print_string "' ="
+```
+ENTAL GOT
+RJP OUTOCT
+RJP CRLF
+RJP PRINT_REGS
+
+ISK CNT
+JP LOOP
+
+; Done
+RJP CRLF
+```
+print_string "DONE - 5 CHARS. CDM SHOULD HAVE WRAPPED."
+```
+RJP CRLF
+RJP PRINT_REGS
+
+>HALT JP HALT
+END

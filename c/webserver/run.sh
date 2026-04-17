@@ -15,12 +15,16 @@ cleanup() {
 trap cleanup EXIT
 cleanup; sleep 0.5
 
+echo "Starting socat..." >&2
 sudo socat pty,link=$PTY1,raw,echo=0,mode=666 pty,link=$PTY2,raw,echo=0,mode=666 &
 sleep 0.5
-sudo pppd $PTY1 115200 noauth nodetach local \
+ls -la $PTY1 $PTY2 >&2
+
+echo "Starting pppd..." >&2
+sudo pppd $PTY1 115200 noauth nodetach local debug \
     10.0.0.1:10.0.0.2 nodefaultroute noccp novj noaccomp nopcomp noipv6 &
 sleep 0.5
 
-echo "=== Ready! curl http://10.0.0.2/ ==="
+echo "=== Ready! curl http://10.0.0.2/ ===" >&2
 
 make -s "$MODE" <> $PTY2 >&0

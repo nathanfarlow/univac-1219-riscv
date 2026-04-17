@@ -12,7 +12,7 @@ __attribute__((used)) void _start_c(void) {
 __attribute__((section(".text.start"))) __attribute__((naked))
 __attribute__((noreturn)) void
 _start(void) {
-  asm volatile("lui sp, 0x12\n"
+  asm volatile("lui sp, 0x10\n"
                "j _start_c\n");
   __builtin_unreachable();
 }

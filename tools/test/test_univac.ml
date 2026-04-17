@@ -44,7 +44,7 @@ let%expect_test "fuzz RISC-V instructions on UNIVAC" =
   [%expect
     {|
     ("Total microseconds across all univac fuzz tests spent executing UNIVAC instructions"
-     (total_timing 7161312200))
+     (total_timing 7157832200))
     |}];
   return ()
 ;;

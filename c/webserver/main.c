@@ -1,7 +1,7 @@
 /*
  * Happy-path PPP/IP/TCP stack for UNIVAC
  *
- * Runs on the UNIVAC emulator, communicates via serial channel 7
+ * Runs on the UNIVAC emulator, communicates via serial channel 10.
  */
 #include <stdint.h>
 #include <stdio.h>
@@ -58,25 +58,40 @@ void ppp_send(uint16_t proto, uint8_t *payload, int len) {
 }
 
 int ppp_recv(uint16_t *proto, uint8_t *payload) {
+  static int have_flag = 0;
   int c;
-  while ((c = raw_getc()) >= 0 && c != 0x7E)
-    ;
-  if (c < 0)
-    return -1;
-
   uint8_t buf[2048];
-  int len = 0, esc = 0;
-  while ((c = raw_getc()) >= 0 && c != 0x7E) {
-    if (esc) {
-      buf[len++] = c ^ 0x20;
-      esc = 0;
-    } else if (c == 0x7D)
-      esc = 1;
-    else
-      buf[len++] = c;
+  int len, esc;
+
+  for (;;) {
+    if (!have_flag) {
+      while ((c = raw_getc()) >= 0 && c != 0x7E)
+        ;
+      if (c < 0)
+        return -1;
+    }
+    have_flag = 0;
+
+    len = 0;
+    esc = 0;
+    while ((c = raw_getc()) >= 0 && c != 0x7E) {
+      if (esc) {
+        buf[len++] = c ^ 0x20;
+        esc = 0;
+      } else if (c == 0x7D)
+        esc = 1;
+      else
+        buf[len++] = c;
+    }
+
+    if (c < 0)
+      return -1;
+    have_flag = 1; /* consumed 0x7E is opening flag of next frame */
+
+    if (len >= 6)
+      break; /* got a real frame */
+    /* short/empty frame (inter-frame fill) — retry */
   }
-  if (len < 6)
-    return 0; /* empty/short frame, continue */
 
   *proto = (buf[2] << 8) | buf[3];
   memcpy(payload, buf + 4, len - 6);
@@ -168,6 +183,7 @@ int main() {
   static struct {
     uint16_t port;
     uint32_t seq;
+    uint32_t ack_seq;
   } conns[MAX_CONNS];
   static int num_conns = 0;
 
@@ -208,7 +224,7 @@ int main() {
       }
     }
     /* IP */
-    else if (proto == 0x0021 && len > 40) {
+    else if (proto == 0x0021 && len >= 40) {
       int ihl = (buf[0] & 0xF) * 4;
       uint32_t src_ip;
       memcpy(&src_ip, buf + 12, 4);
@@ -221,7 +237,6 @@ int main() {
       uint8_t flags = tcp[13];
       int doff = (tcp[12] >> 4) * 4;
       int dlen = len - ihl - doff;
-
       /* Find or create connection entry */
       int ci = -1;
       for (int i = 0; i < num_conns; i++) {
@@ -232,24 +247,39 @@ int main() {
       }
 
       if (flags & 0x02) { /* SYN -> SYN-ACK */
-        if (ci < 0 && num_conns < MAX_CONNS) {
-          ci = num_conns++;
-          conns[ci].port = sp;
+        if (ci >= 0) {
+          /* Duplicate SYN for existing connection — skip */
+        } else {
+          if (num_conns < MAX_CONNS) {
+            ci = num_conns++;
+            conns[ci].port = sp;
+          }
+          if (ci >= 0) {
+            conns[ci].seq = 1001;
+            conns[ci].ack_seq = tseq + 1;
+          }
+          tcp_packet(pkt, &plen, 80, sp, 1000, tseq + 1, 0x12, NULL, 0, my_ip,
+                     src_ip);
+          ip_packet(buf, &len, my_ip, src_ip, pkt, plen);
+          ppp_send(0x0021, buf, len);
         }
-        if (ci >= 0)
-          conns[ci].seq = 1001;
-        tcp_packet(pkt, &plen, 80, sp, 1000, tseq + 1, 0x12, NULL, 0, my_ip,
-                   src_ip);
-        ip_packet(buf, &len, my_ip, src_ip, pkt, plen);
-        ppp_send(0x0021, buf, len);
       } else if (dlen > 0) { /* Data -> HTTP response */
+        if (ci >= 0 && tseq < conns[ci].ack_seq) {
+          /* Retransmitted data — re-ACK and skip */
+          tcp_packet(pkt, &plen, 80, sp, conns[ci].seq, conns[ci].ack_seq,
+                     0x10, NULL, 0, my_ip, src_ip);
+          ip_packet(buf, &len, my_ip, src_ip, pkt, plen);
+          ppp_send(0x0021, buf, len);
+          continue;
+        }
         uint32_t seq = (ci >= 0) ? conns[ci].seq : 1001;
-        char *body = "Hello from UNIVAC PPP/IP/TCP!\n";
-        char http[256];
-        int hlen = snprintf(http, sizeof(http),
-                            "HTTP/1.0 200 OK\r\nConnection: "
-                            "close\r\nContent-Length: %d\r\n\r\n%s",
-                            (int)strlen(body), body);
+        if (ci >= 0)
+          conns[ci].ack_seq = tseq + dlen;
+        char *http = "HTTP/1.0 200 OK\r\nConnection: close\r\n"
+                     "Content-Type: text/html\r\n"
+                     "Content-Length: 76\r\n\r\n"
+                     "<html><body><marquee>Hello from UNIVAC PPP/IP/TCP!</marquee></body></html>\n";
+        int hlen = strlen(http);
         tcp_packet(pkt, &plen, 80, sp, seq, tseq + dlen, 0x18, (uint8_t *)http,
                    hlen, my_ip, src_ip);
         ip_packet(buf, &len, my_ip, src_ip, pkt, plen);
